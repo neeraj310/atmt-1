@@ -67,7 +67,7 @@ class Seq2SeqDataset(Dataset):
             'num_tokens': sum(len(s['target']) for s in samples),
         }
 
-
+#batch_size = default value
 class BatchSampler(Sampler):
     def __init__(self, dataset, max_tokens=None, batch_size=None, num_shards=1, shard_id=0, shuffle=True, seed=42):
         self.dataset, self.shuffle, self.seed = dataset, shuffle, seed

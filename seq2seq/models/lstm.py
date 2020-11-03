@@ -43,6 +43,7 @@ class LSTMModel(Seq2SeqModel):
         base_architecture(args)
         encoder_pretrained_embedding = None
         decoder_pretrained_embedding = None
+        print('\n in function lstm.build_models')
 
         # Load pre-trained embeddings, if desired
         if args.encoder_embed_path:
@@ -224,8 +225,9 @@ class LSTMDecoder(Seq2SeqDecoder):
         self.use_lexical_model = use_lexical_model
         if self.use_lexical_model:
             # __LEXICAL: Add parts of decoder architecture corresponding to the LEXICAL MODEL here
-            pass
-            # TODO: --------------------------------------------------------------------- /CUT
+            self.stepwise_lexical_projection = nn.Linear(embed_dim, embed_dim, bias=None)
+            self.final_lexical_projection = nn.Linear(embed_dim, len(dictionary))
+            print('use_lexical_model is True')
 
     def forward(self, tgt_inputs, encoder_out, incremental_state=None):
         """ Performs the forward pass through the instantiated model. """
@@ -291,9 +293,12 @@ class LSTMDecoder(Seq2SeqDecoder):
 
                 if self.use_lexical_model:
                     # __LEXICAL: Compute and collect LEXICAL MODEL context vectors here
-                    # TODO: --------------------------------------------------------------------- CUT
-                    pass
-                    # TODO: --------------------------------------------------------------------- /CUT
+                    step_attn_weights = step_attn_weights.permute(1, 0).unsqueeze(dim=2)
+                    # Compute lexical context
+                    weighted_lexical_mean = torch.tanh(step_attn_weights * src_embeddings).sum(dim=0)
+                    # Feed lexical context through a one-layer FNN with skip connections
+                    lexical_contexts.append(
+                        torch.tanh(self.stepwise_lexical_projection(weighted_lexical_mean)) + weighted_lexical_mean)
 
             input_feed = F.dropout(input_feed, p=self.dropout_out, training=self.training)
             rnn_outputs.append(input_feed)
@@ -313,9 +318,13 @@ class LSTMDecoder(Seq2SeqDecoder):
 
         if self.use_lexical_model:
             # __LEXICAL: Incorporate the LEXICAL MODEL into the prediction of target tokens here
-            pass
-            # TODO: --------------------------------------------------------------------- /CUT
-
+            # Collect outputs across time steps
+            lexical_module_output = \
+                torch.cat(lexical_contexts, dim=0).view(tgt_time_steps, batch_size, self.embed_dim)
+            lexical_module_output = lexical_module_output.transpose(0, 1)
+            # Combine decoder output with the lexical module output
+            lexical_module_output = self.final_lexical_projection(lexical_module_output)
+            decoder_output += lexical_module_output
 
         return decoder_output, attn_weights
 
@@ -325,16 +334,16 @@ def base_architecture(args):
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 64)
     args.encoder_embed_path = getattr(args, 'encoder_embed_path', None)
     args.encoder_hidden_size = getattr(args, 'encoder_hidden_size', 64)
-    args.encoder_num_layers = getattr(args, 'encoder_num_layers', 1)
+    args.encoder_num_layers = getattr(args, 'encoder_num_layers', 3)
     args.encoder_bidirectional = getattr(args, 'encoder_bidirectional', 'True')
-    args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', 0.25)
-    args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', 0.25)
+    args.encoder_dropout_in = getattr(args, 'encoder_dropout_in', 0.35)
+    args.encoder_dropout_out = getattr(args, 'encoder_dropout_out', 0.35)
 
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 64)
     args.decoder_embed_path = getattr(args, 'decoder_embed_path', None)
     args.decoder_hidden_size = getattr(args, 'decoder_hidden_size', 128)
-    args.decoder_num_layers = getattr(args, 'decoder_num_layers', 1)
-    args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', 0.25)
-    args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', 0.25)
+    args.decoder_num_layers = getattr(args, 'decoder_num_layers', 3)
+    args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', 0.35)
+    args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', 0.35)
     args.decoder_use_attention = getattr(args, 'decoder_use_attention', 'True')
-    args.decoder_use_lexical_model = getattr(args, 'decoder_use_lexical_model', 'False')
+    args.decoder_use_lexical_model = getattr(args, 'decoder_use_lexical_model', 'True')
