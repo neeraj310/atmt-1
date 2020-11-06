@@ -225,8 +225,9 @@ class LSTMDecoder(Seq2SeqDecoder):
         self.use_lexical_model = use_lexical_model
         if self.use_lexical_model:
             # __LEXICAL: Add parts of decoder architecture corresponding to the LEXICAL MODEL here
-            self.stepwise_lexical_projection = nn.Linear(embed_dim, embed_dim, bias=None)
-            self.final_lexical_projection = nn.Linear(embed_dim, len(dictionary))
+            self.lexical_hidden = nn.Linear(embed_dim, embed_dim, bias=None)
+            # Output of lexical FFNN is added to decoder output, so make the dimensional compatible with decoder output. 
+            self.lexical_final = nn.Linear(embed_dim, len(dictionary))
             print('use_lexical_model is True')
 
     def forward(self, tgt_inputs, encoder_out, incremental_state=None):
@@ -293,12 +294,13 @@ class LSTMDecoder(Seq2SeqDecoder):
 
                 if self.use_lexical_model:
                     # __LEXICAL: Compute and collect LEXICAL MODEL context vectors here
-                    step_attn_weights = step_attn_weights.permute(1, 0).unsqueeze(dim=2)
-                    # Compute lexical context
-                    weighted_lexical_mean = torch.tanh(step_attn_weights * src_embeddings).sum(dim=0)
-                    # Feed lexical context through a one-layer FNN with skip connections
+		            # use the attention weights to form a weighted average of the embeddings 
+                    step_attn_weights= step_attn_weights.permute(1, 0).unsqueeze(dim=2)
+                    # Get average source word embedding
+                    average_sw_embedding = torch.tanh(step_attn_weights * src_embeddings).sum(dim=0)
+                    # Use a one hidden layer FFNN with skip connections
                     lexical_contexts.append(
-                        torch.tanh(self.stepwise_lexical_projection(weighted_lexical_mean)) + weighted_lexical_mean)
+                        torch.tanh(self.lexical_hidden(average_sw_embedding )) + average_sw_embedding  )
 
             input_feed = F.dropout(input_feed, p=self.dropout_out, training=self.training)
             rnn_outputs.append(input_feed)
@@ -318,13 +320,10 @@ class LSTMDecoder(Seq2SeqDecoder):
 
         if self.use_lexical_model:
             # __LEXICAL: Incorporate the LEXICAL MODEL into the prediction of target tokens here
-            # Collect outputs across time steps
-            lexical_module_output = \
+            lexical_output = \
                 torch.cat(lexical_contexts, dim=0).view(tgt_time_steps, batch_size, self.embed_dim)
-            lexical_module_output = lexical_module_output.transpose(0, 1)
-            # Combine decoder output with the lexical module output
-            lexical_module_output = self.final_lexical_projection(lexical_module_output)
-            decoder_output += lexical_module_output
+            
+            decoder_output = decoder_output  + self.lexical_final(lexical_output.transpose(0, 1))
 
         return decoder_output, attn_weights
 
@@ -346,4 +345,4 @@ def base_architecture(args):
     args.decoder_dropout_in = getattr(args, 'decoder_dropout_in', 0.35)
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', 0.35)
     args.decoder_use_attention = getattr(args, 'decoder_use_attention', 'True')
-    args.decoder_use_lexical_model = getattr(args, 'decoder_use_lexical_model', 'True')
+    args.decoder_use_lexical_model = getattr(args, 'decoder_use_lexical_model', 'False')
